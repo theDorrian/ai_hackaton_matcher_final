@@ -145,10 +145,10 @@ st.header("Automated Resume Matching")
 st.sidebar.header("Settings")
 use_local_emb = st.sidebar.checkbox("Local embeddings (E5)", value=_HAS_ST)
 weights = {
-    "tfidf": st.sidebar.slider("Weight: TF-IDF", 0.0, 1.0, 0.25, 0.05),
-    "embed": st.sidebar.slider("Weight: Embeddings", 0.0, 1.0, 0.45, 0.05),
-    "title": st.sidebar.slider("Weight: Title", 0.0, 1.0, 0.15, 0.05),
-    "skills": st.sidebar.slider("Weight: Skills", 0.0, 1.0, 0.15, 0.05),
+    "tfidf":  st.sidebar.slider("Weight TF-IDF",   0.0, 1.0, 0.25, 0.05),
+    "embed":  st.sidebar.slider("Weight Embeddings", 0.0, 1.0, 0.20, 0.05),
+    "title":  st.sidebar.slider("Weight Title",   0.0, 1.0, 0.15, 0.05),
+    "skills": st.sidebar.slider("Weight Skills",  0.0, 1.0, 0.40, 0.05),
 }
 if abs(sum(weights.values()) - 1.0) > 1e-6:
     st.sidebar.warning("Weights must sum to 1.0")
