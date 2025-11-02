@@ -9,7 +9,6 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from rapidfuzz import fuzz
 
-# optional local embeddings
 try:
     from sentence_transformers import SentenceTransformer
     _HAS_ST = True
@@ -18,11 +17,9 @@ except Exception:
 
 from openai import OpenAI
 
-# ---------------- UI ----------------
 st.set_page_config(page_title="Resume Matcher", layout="wide")
 st.markdown("<style>.main .block-container{max-width:1200px}</style>", unsafe_allow_html=True)
 
-# ---------------- Helpers ----------------
 def norm(s: str) -> str:
     return re.sub(r"\s+", " ", (s or "")).strip()
 
@@ -160,42 +157,6 @@ def adjust_score(base: float, title_raw: float, skill_raw: float, verdict: str) 
     adj = base * vf * g
     return float(max(0.0, min(1.0, adj)))
 
-# ---------------- Presentation ----------------
-PRESENTATION = [
-    ("Проблема", "Много резюме на вакансию. Ручная оценка медленная и субъективная."),
-    ("Цель", "Автоматически сопоставлять резюме и вакансии. Давать оценку и краткое объяснение."),
-    ("Архитектура", "PDF → Text → TF-IDF/Embeddings/Title/Skills → BaseScore → LLM-verdict → Score → Ранжирование."),
-    ("Модель", "Score = BaseScore (веса) × verdict-factor × gates(title, skills)."),
-    ("Интерфейс", "Streamlit. Отдельная загрузка Jobs и Resumes. Вкладки по вакансиям. Экспорт CSV. Объяснения от gpt-4o-mini."),
-    ("Результаты", "Согласованность вердикта с человеком высокая, расходы низкие за счёт gpt-4o-mini."),
-    ("Дальше", "Кэш LLM, тонкая настройка весов, интеграция в ATS, мультиязычность."),
-]
-
-def render_presentation():
-    st.subheader("Презентация")
-    st.markdown(
-        """
-        <style>
-        .slide-block{padding:10px 0 16px 0}
-        .slide-sep{height:1px;background:#eaeaea;margin:18px 0}
-        .slide-title{font-size:22px;font-weight:700;margin:0 0 6px 0}
-        .slide-text{font-size:16px;color:#333;line-height:1.5}
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-    for idx, (title, text) in enumerate(PRESENTATION, start=1):
-        st.markdown(
-            f"<div class='slide-block'>"
-            f"<div class='slide-title'>{idx}. {title}</div>"
-            f"<div class='slide-text'>{text}</div>"
-            f"</div>",
-            unsafe_allow_html=True,
-        )
-        if idx != len(PRESENTATION):
-            st.markdown("<div class='slide-sep'></div>", unsafe_allow_html=True)
-
-# ---------------- Matcher ----------------
 def render_matcher():
     st.header("Automated Resume Matching")
 
@@ -283,18 +244,4 @@ def render_matcher():
                 mime="text/csv"
             )
 
-# ---------------- Mode switch ----------------
-if "mode" not in st.session_state:
-    st.session_state.mode = "program"
-
-c1, c2 = st.columns([1,1])
-if c1.button("Программа", use_container_width=True):
-    st.session_state.mode = "program"
-if c2.button("Презентация", use_container_width=True):
-    st.session_state.mode = "presentation"
-st.write("")
-
-if st.session_state.mode == "program":
-    render_matcher()
-else:
-    render_presentation()
+render_matcher()
