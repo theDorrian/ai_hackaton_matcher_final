@@ -226,7 +226,6 @@ def render_matcher():
                 results.append({
                     "Resume": resumes_df.iloc[j]["name"],
                     "Score": score,
-                    "Verdict": verdict,
                     "Explanation": expl
                 })
                 prog.progress(k/len(pre_idx))
