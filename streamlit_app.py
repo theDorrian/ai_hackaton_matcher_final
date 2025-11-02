@@ -1,32 +1,31 @@
-import os, re, time
+# app.py
+import os, re, time, json
 from io import StringIO
-from typing import List, Dict
+from typing import Dict
 import numpy as np
 import pandas as pd
 import streamlit as st
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from rapidfuzz import fuzz
+
+# optional local embeddings
 try:
     from sentence_transformers import SentenceTransformer
     _HAS_ST = True
 except Exception:
     _HAS_ST = False
+
 from openai import OpenAI
 
-# ---------- base ui ----------
+# ---------------- UI ----------------
 st.set_page_config(page_title="Resume Matcher", layout="wide")
 st.markdown(
-    """
-    <style>
-    .main .block-container {max-width: 1200px;}
-    .mode-btn {display:inline-block;margin-right:8px}
-    </style>
-    """,
+    "<style>.main .block-container{max-width:1200px}</style>",
     unsafe_allow_html=True,
 )
 
-# ---------- helpers ----------
+# ---------------- Helpers ----------------
 def norm(s: str) -> str:
     return re.sub(r"\s+", " ", (s or "")).strip()
 
@@ -59,21 +58,26 @@ def compute_blocks(resumes_df: pd.DataFrame,
                    emb_model_name: str = "intfloat/multilingual-e5-base") -> Dict[str, np.ndarray]:
     R = resumes_df["text"].tolist()
     J = jobs_df["text"].tolist()
+
     tfidf = TfidfVectorizer(max_features=45000, ngram_range=(1, 2))
     X_res = tfidf.fit_transform(R)
     X_job = tfidf.transform(J)
     C_tfidf = cosine_similarity(X_job, X_res)
+
     if use_local_emb and _HAS_ST:
         model = SentenceTransformer(emb_model_name)
+
         def _prep(texts, is_query=False):
             if "e5" in (emb_model_name or "").lower():
                 return [("query: " if is_query else "passage: ") + (t or "") for t in texts]
             return texts
+
         E_res = model.encode(_prep(R, False), batch_size=128, show_progress_bar=False, normalize_embeddings=True)
         E_job = model.encode(_prep(J, True),  batch_size=128, show_progress_bar=False, normalize_embeddings=True)
         C_emb = np.asarray(E_job) @ np.asarray(E_res).T
     else:
         C_emb = np.zeros_like(C_tfidf)
+
     job_titles = [norm((t.split("\n")[0] if t else "")).lower() for t in J]
     res_titles = [norm((t.split("\n")[0] if t else "")).lower() for t in R]
     TitleSim = np.zeros_like(C_tfidf, dtype=np.float32)
@@ -81,9 +85,11 @@ def compute_blocks(resumes_df: pd.DataFrame,
         jt = job_titles[i]
         for j in range(TitleSim.shape[1]):
             TitleSim[i, j] = fuzz.token_set_ratio(jt, res_titles[j]) / 100.0
+
     skill_pat = re.compile(r"\b[A-Za-z][A-Za-z0-9\.\+\#\-]{1,}\b")
     def skill_set(text: str) -> set:
         return set(t.lower() for t in skill_pat.findall(text))
+
     job_skill_sets = [skill_set(t) for t in J]
     res_skill_sets = [skill_set(t) for t in R]
     SkillJac = np.zeros_like(C_tfidf, dtype=np.float32)
@@ -93,12 +99,14 @@ def compute_blocks(resumes_df: pd.DataFrame,
             rs = res_skill_sets[j]
             u = len(js | rs)
             SkillJac[i, j] = (len(js & rs) / u) if u else 0.0
+
     return dict(
         S_tfidf=minmax01(C_tfidf),
         S_emb=minmax01(C_emb) if use_local_emb and _HAS_ST else C_emb,
         S_title=minmax01(TitleSim),
         S_skill=minmax01(SkillJac),
-        TitleRaw=TitleSim, SkillRaw=SkillJac
+        TitleRaw=TitleSim,
+        SkillRaw=SkillJac,
     )
 
 def combine_score(B: Dict[str, np.ndarray], w: Dict[str, float]) -> np.ndarray:
@@ -109,27 +117,42 @@ def compact_text(text: str, head=900) -> str:
 
 SYSTEM_JSON = (
     "Ты HR-аналитик. Дай объективную оценку соответствия кандидата вакансии. "
-    "Ответ строго в JSON с ключами: verdict(one of: fit, partial, no_fit), explanation(str, 1-2 предложения). "
-    "Учитывай навыки/стек/роль/опыт. Избегай противоречий."
+    "Ответ строго в JSON с ключами: verdict (fit|partial|no_fit), explanation (строка, 1–2 предложения). "
+    "Если много совпадений по стеку и функциям — не ставь no_fit."
 )
 
-def llm_verdict(client: OpenAI, job_text: str, res_text: str, model="gpt-4o-mini") -> Dict[str, str]:
+def _safe_json_loads(s: str) -> dict:
+    try:
+        return json.loads(s)
+    except Exception:
+        m = re.search(r"\{.*\}", s, flags=re.S)
+        if m:
+            try:
+                return json.loads(m.group(0))
+            except Exception:
+                return {}
+        return {}
+
+def llm_verdict(client: OpenAI, job_text: str, res_text: str, model="gpt-4o-mini") -> dict:
     user = f"Вакансия:\n{job_text}\n\nРезюме:\n{res_text}"
     try:
         resp = client.chat.completions.create(
             model=model,
             temperature=0.2,
-            max_tokens=120,
+            max_tokens=160,
             response_format={"type": "json_object"},
-            messages=[{"role": "system", "content": SYSTEM_JSON},
-                      {"role": "user", "content": user}],
+            messages=[
+                {"role": "system", "content": SYSTEM_JSON},
+                {"role": "user", "content": user},
+            ],
         )
-        data = pd.io.json.loads(resp.choices[0].message.content)
-        v = data.get("verdict", "partial")
-        e = data.get("explanation", "")
-        if v not in {"fit","partial","no_fit"}:
-            v = "partial"
-        return {"verdict": v, "explanation": e}
+        content = resp.choices[0].message.content or "{}"
+        data = _safe_json_loads(content)
+        verdict = data.get("verdict", "partial")
+        if verdict not in {"fit", "partial", "no_fit"}:
+            verdict = "partial"
+        explanation = data.get("explanation", "")
+        return {"verdict": verdict, "explanation": explanation}
     except Exception as e:
         return {"verdict": "partial", "explanation": f"[API error: {e}]"}
 
@@ -140,35 +163,45 @@ def adjust_score(base: float, title_raw: float, skill_raw: float, verdict: str) 
     adj = base * vf * g
     return float(max(0.0, min(1.0, adj)))
 
-# ---------- presentation ----------
+# ---------------- Presentation ----------------
 PRESENTATION = [
-    ("Проблема", "Много резюме на каждую вакансию. Ручная оценка медленная и субъективная."),
+    ("Проблема", "Много резюме на вакансию. Ручная оценка медленная и субъективная."),
     ("Цель", "Автоматически сопоставлять резюме и вакансии. Давать оценку и краткое объяснение."),
     ("Архитектура", "PDF → Text → TF-IDF/Embeddings/Title/Skills → BaseScore → LLM-verdict → AdjScore → Ранжирование."),
     ("Модель", "Score = w1*TF-IDF + w2*Emb + w3*Title + w4*Skills. Вердикт LLM: fit/partial/no_fit. AdjScore = Base*factor*gates."),
-    ("Интерфейс", "Streamlit. Отдельная загрузка Jobs и Resumes. Вкладки по вакансиям. Экспорт CSV. Объяснения от GPT-4o-mini."),
+    ("Интерфейс", "Streamlit. Отдельная загрузка Jobs и Resumes. Вкладки по вакансиям. Экспорт CSV. Объяснения от gpt-4o-mini."),
     ("Результаты", "Согласованность вердикта с человеком высокая, расходы низкие за счёт gpt-4o-mini и предвыбора кандидатов."),
-    ("Дальше", "Кэш LLM, тонкая настройка весов, интеграция в ATS, мультиязычность.")
+    ("Дальше", "Кэш LLM, тонкая настройка весов, интеграция в ATS, мультиязычность."),
 ]
 
 def render_presentation():
     st.subheader("Презентация")
-    if "slide" not in st.session_state: st.session_state.slide = 0
-    c1, c2, c3 = st.columns([1,1,6])
-    prev = c1.button("Назад", use_container_width=True, key="prev")
-    nxt  = c2.button("Дальше", use_container_width=True, key="next")
-    if prev: st.session_state.slide = max(0, st.session_state.slide - 1)
-    if nxt:  st.session_state.slide = min(len(PRESENTATION)-1, st.session_state.slide + 1)
-    title, content = PRESENTATION[st.session_state.slide]
-    st.markdown(f"### {title}")
-    st.write(content)
-    st.progress((st.session_state.slide+1)/len(PRESENTATION))
-    md = "\n\n".join([f"## {t}\n{c}" for t,c in PRESENTATION])
-    st.download_button("Скачать презентацию (Markdown)", md.encode("utf-8"), "presentation.md", "text/markdown")
+    st.markdown(
+        """
+        <style>
+        .slide-block{padding:10px 0 16px 0}
+        .slide-sep{height:1px;background:#eaeaea;margin:18px 0}
+        .slide-title{font-size:22px;font-weight:700;margin:0 0 6px 0}
+        .slide-text{font-size:16px;color:#333;line-height:1.5}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    for idx, (title, text) in enumerate(PRESENTATION, start=1):
+        st.markdown(
+            f"<div class='slide-block'>"
+            f"<div class='slide-title'>{idx}. {title}</div>"
+            f"<div class='slide-text'>{text}</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+        if idx != len(PRESENTATION):
+            st.markdown("<div class='slide-sep'></div>", unsafe_allow_html=True)
 
-# ---------- matcher ----------
+# ---------------- Matcher ----------------
 def render_matcher():
     st.header("Automated Resume Matching")
+
     st.sidebar.header("Settings")
     use_local_emb = st.sidebar.checkbox("Local embeddings (E5)", value=True)
     weights = {
@@ -179,8 +212,8 @@ def render_matcher():
     }
     if abs(sum(weights.values()) - 1.0) > 1e-6:
         st.sidebar.warning("Weights must sum to 1.0")
-    topk_view = st.sidebar.slider("Top-K per job", 5, 50, 10, 1)
-    pre_mult  = st.sidebar.slider("Pre-select multiplier (Top-K×)", 1, 5, 2, 1)
+    topk_view = st.sidebar.slider("Top-K per job to display", 5, 50, 10, 1)
+
     api_key   = st.sidebar.text_input("OpenAI API Key", type="password", value=os.getenv("OPENAI_API_KEY",""))
     model_name= st.sidebar.selectbox("LLM model", ["gpt-4o-mini"], index=0)
     sleep_sec = st.sidebar.slider("Pause between LLM calls (sec.)", 0.0, 1.0, 0.20, 0.05)
@@ -217,8 +250,9 @@ def render_matcher():
         with tab:
             base_row = Score[i]
             order_base = np.argsort(-base_row)
-            pre_k = min(len(order_base), max(topk_view*pre_mult, topk_view))
-            pre_idx = order_base[:pre_k]
+
+            # объяснения считаем для ровно Top-K (без предвыбора ×N)
+            pre_idx = order_base[:topk_view]
             job_text = compact_text(jobs_df.iloc[i]["text"])
 
             results = []
@@ -240,14 +274,14 @@ def render_matcher():
                     "Verdict": verdict,
                     "Explanation": expl
                 })
-                prog.progress(k/pre_k)
+                prog.progress(k/len(pre_idx))
                 time.sleep(sleep_sec)
             prog.empty()
 
             df = pd.DataFrame(results).sort_values("AdjScore", ascending=False).reset_index(drop=True)
             df.insert(0, "Rank", range(1, len(df)+1))
             st.subheader("Ranking")
-            st.dataframe(df.head(topk_view), use_container_width=True, hide_index=True)
+            st.dataframe(df, use_container_width=True, hide_index=True)
             st.download_button(
                 "Скачать CSV",
                 df.to_csv(index=False).encode("utf-8"),
@@ -255,9 +289,10 @@ def render_matcher():
                 mime="text/csv"
             )
 
-# ---------- top mode switch ----------
+# ---------------- Mode switch ----------------
 if "mode" not in st.session_state:
     st.session_state.mode = "program"
+
 c1, c2 = st.columns([1,1])
 if c1.button("Программа", use_container_width=True):
     st.session_state.mode = "program"
