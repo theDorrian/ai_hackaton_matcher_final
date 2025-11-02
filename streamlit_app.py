@@ -20,10 +20,7 @@ from openai import OpenAI
 
 # ---------------- UI ----------------
 st.set_page_config(page_title="Resume Matcher", layout="wide")
-st.markdown(
-    "<style>.main .block-container{max-width:1200px}</style>",
-    unsafe_allow_html=True,
-)
+st.markdown("<style>.main .block-container{max-width:1200px}</style>", unsafe_allow_html=True)
 
 # ---------------- Helpers ----------------
 def norm(s: str) -> str:
@@ -167,10 +164,10 @@ def adjust_score(base: float, title_raw: float, skill_raw: float, verdict: str) 
 PRESENTATION = [
     ("Проблема", "Много резюме на вакансию. Ручная оценка медленная и субъективная."),
     ("Цель", "Автоматически сопоставлять резюме и вакансии. Давать оценку и краткое объяснение."),
-    ("Архитектура", "PDF → Text → TF-IDF/Embeddings/Title/Skills → BaseScore → LLM-verdict → AdjScore → Ранжирование."),
-    ("Модель", "Score = w1*TF-IDF + w2*Emb + w3*Title + w4*Skills. Вердикт LLM: fit/partial/no_fit. AdjScore = Base*factor*gates."),
+    ("Архитектура", "PDF → Text → TF-IDF/Embeddings/Title/Skills → BaseScore → LLM-verdict → Score → Ранжирование."),
+    ("Модель", "Score = BaseScore (веса) × verdict-factor × gates(title, skills)."),
     ("Интерфейс", "Streamlit. Отдельная загрузка Jobs и Resumes. Вкладки по вакансиям. Экспорт CSV. Объяснения от gpt-4o-mini."),
-    ("Результаты", "Согласованность вердикта с человеком высокая, расходы низкие за счёт gpt-4o-mini и предвыбора кандидатов."),
+    ("Результаты", "Согласованность вердикта с человеком высокая, расходы низкие за счёт gpt-4o-mini."),
     ("Дальше", "Кэш LLM, тонкая настройка весов, интеграция в ATS, мультиязычность."),
 ]
 
@@ -238,7 +235,7 @@ def render_matcher():
 
     with st.spinner("Scoring"):
         B = compute_blocks(resumes_df, jobs_df, use_local_emb=use_local_emb)
-        Score = combine_score(B, weights)
+        base_scores = combine_score(B, weights)
 
     if not api_key:
         st.error("Укажите OpenAI API key.")
@@ -248,10 +245,8 @@ def render_matcher():
     tabs = st.tabs([n for n in jobs_df["name"].tolist()])
     for i, tab in enumerate(tabs):
         with tab:
-            base_row = Score[i]
+            base_row = base_scores[i]
             order_base = np.argsort(-base_row)
-
-            # объяснения считаем для ровно Top-K (без предвыбора ×N)
             pre_idx = order_base[:topk_view]
             job_text = compact_text(jobs_df.iloc[i]["text"])
 
@@ -261,7 +256,7 @@ def render_matcher():
                 res_text = compact_text(resumes_df.iloc[j]["text"])
                 out = llm_verdict(client, job_text, res_text, model=model_name)
                 verdict, expl = out["verdict"], out["explanation"]
-                adj = adjust_score(
+                score = adjust_score(
                     base=float(base_row[j]),
                     title_raw=float(B["TitleRaw"][i, j]),
                     skill_raw=float(B["SkillRaw"][i, j]),
@@ -269,8 +264,7 @@ def render_matcher():
                 )
                 results.append({
                     "Resume": resumes_df.iloc[j]["name"],
-                    "BaseScore": float(base_row[j]),
-                    "AdjScore": adj,
+                    "Score": score,
                     "Verdict": verdict,
                     "Explanation": expl
                 })
@@ -278,7 +272,7 @@ def render_matcher():
                 time.sleep(sleep_sec)
             prog.empty()
 
-            df = pd.DataFrame(results).sort_values("AdjScore", ascending=False).reset_index(drop=True)
+            df = pd.DataFrame(results).sort_values("Score", ascending=False).reset_index(drop=True)
             df.insert(0, "Rank", range(1, len(df)+1))
             st.subheader("Ranking")
             st.dataframe(df, use_container_width=True, hide_index=True)
