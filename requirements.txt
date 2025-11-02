@@ -1,1 +1,12 @@
-streamlit>=1.26.0
+streamlit>=1.39
+pandas>=2.0
+numpy>=1.24
+scikit-learn>=1.4
+rapidfuzz>=3.9.6
+PyPDF2>=3.0.1
+pdfminer.six>=20231228
+tqdm>=4.66
+sentence-transformers>=3.0.1
+torch
+openai>=1.51.0
+python-dotenv>=1.0.1
