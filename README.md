@@ -1,25 +1,19 @@
-# 📦 Streamlit App Starter Kit 
-```
-⬆️ (Replace above with your app's name)
-```
+# 🧭 AI Hackathon – Resume Matching Demo
 
-Description of the app ...
+### Stream 1: Automated Resume Matching System
 
-## Demo App
+Этот проект был разработан для **AI Hackathon: Code. Create. Conquer.**  
+Задача — построить систему, автоматически сопоставляющую **резюме кандидатов** с **вакансиями**.
 
-[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://app-starter-kit.streamlit.app/)
+---
 
-## GitHub Codespaces
+## 🚀 Запуск локально
 
-[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/streamlit/app-starter-kit?quickstart=1)
-
-## Section Heading
-
-This is filler text, please replace this with text for this section.
-
-## Further Reading
-
-This is filler text, please replace this with a explanatory text about further relevant resources for this repo
-- Resource 1
-- Resource 2
-- Resource 3
+```bash
+git clone https://github.com/<your_team>/ai_hack_matcher
+cd ai_hack_matcher
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+cp .env .env
+# вставь свой OpenAI API ключ
+streamlit run app.py
